@@ -1,5 +1,5 @@
 # ==============================================================================
-#  Copyright 2018-2019 Intel Corporation
+#  Copyright 2018-2020 Intel Corporation
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -37,41 +37,31 @@ ext = 'dylib' if system() == 'Darwin' else 'so'
 with open(@README_DOC@, "r") as fh:
     long_description = fh.read()
 
-# Collect the list of include files, while preserving the tree structure
-os.chdir('ngraph_bridge')
-include_list = []
-for path, dirs, files in os.walk('include'):
-  for f in files:
-    include_list.append(path + "/" + f )
-
-os.chdir('..')
-
 # The following is filled in my cmake - essentially a list of library
 # and license files
 ng_data_list = [
     @ngraph_libraries@ @license_files@ @licence_top_level@
 ]
-include_list.extend(ng_data_list)
 
 # This is the contents of the Package Data
 package_data_dict = {}
-package_data_dict['ngraph_bridge'] = include_list
+package_data_dict['ngraph_bridge'] = ng_data_list
 
-setup( 
+setup(
     name='ngraph_tensorflow_bridge',
-    version='0.19.0rc5',
+    version='0.23.0rc0',
     description='Intel nGraph compiler and runtime for TensorFlow',
     long_description=long_description,
     long_description_content_type="text/markdown",
     url='https://github.com/tensorflow/ngraph-bridge',
-    packages=['ngraph_bridge'], 
-    author='Intel Nervana', 
+    packages=['ngraph_bridge'],
+    author='Intel Corporation',
     license='Apache License, Version 2.0',
     platforms='Ubuntu 16.04, macOS Sierra',
     include_package_data=True,
     package_data= package_data_dict,
     cmdclass={'bdist_wheel': BinaryBdistWheel},
-    extras_require={
-        'plaidml': ["plaidml>=0.6.3"],
-    },
+    install_requires=[
+        "tensorflow==2.2.0",
+    ],
 )

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright 2017-2019 Intel Corporation
+ * Copyright 2017-2020 Intel Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,71 +18,66 @@
 #include "ngraph_bridge/ngraph_conversions.h"
 
 using namespace std;
-namespace ng = ngraph;
 
 namespace tensorflow {
-
 namespace ngraph_bridge {
-
 namespace testing {
 
-TEST(conversions, reshape) {
-  std::shared_ptr<ng::Node> ng_node =
-      make_shared<ng::op::Parameter>(ng::element::f32, ng::Shape{2, 3, 4, 5});
-  Reshape<3, 2, 0, 1>(ng_node);
-  ASSERT_EQ(ng_node->get_shape(), (ng::Shape{5, 4, 2, 3}));
+TEST(conversions, transpose) {
+  ngraph::Output<ngraph::Node> node = make_shared<ngraph::op::Parameter>(
+      ngraph::element::f32, ngraph::Shape{2, 3, 4, 5});
+  Transpose<3, 2, 0, 1>(node);
+  ASSERT_EQ(node.get_shape(), (ngraph::Shape{5, 4, 2, 3}));
 }
 
 TEST(conversions, batch_to_tensorflow_nchw) {
-  auto shape = ng::Shape{2, 3, 4, 5};
-  std::shared_ptr<ng::Node> ng_node =
-      make_shared<ng::op::Parameter>(ng::element::f32, shape);
-  BatchToTensorflow("tag", false, ng_node);
-  ASSERT_EQ(ng_node->get_shape(), shape);
+  auto shape = ngraph::Shape{2, 3, 4, 5};
+  ngraph::Output<ngraph::Node> node =
+      make_shared<ngraph::op::Parameter>(ngraph::element::f32, shape);
+  NCHWtoNHWC("tag", false, node);
+  ASSERT_EQ(node.get_shape(), shape);
 }
 
 TEST(conversions, batch_to_tensorflow_nhwc) {
-  auto shape = ng::Shape{2, 3, 4, 5};
-  std::shared_ptr<ng::Node> ng_node =
-      make_shared<ng::op::Parameter>(ng::element::f32, shape);
-  BatchToTensorflow("tag", true, ng_node);
-  ASSERT_EQ(ng_node->get_shape(), (ng::Shape{2, 4, 5, 3}));
+  auto shape = ngraph::Shape{2, 3, 4, 5};
+  ngraph::Output<ngraph::Node> node =
+      make_shared<ngraph::op::Parameter>(ngraph::element::f32, shape);
+  NCHWtoNHWC("tag", true, node);
+  ASSERT_EQ(node.get_shape(), (ngraph::Shape{2, 4, 5, 3}));
 }
 
 TEST(conversions, batch_to_ngraph_nchw) {
-  auto shape = ng::Shape{2, 3, 4, 5};
-  std::shared_ptr<ng::Node> ng_node =
-      make_shared<ng::op::Parameter>(ng::element::f32, shape);
-  BatchToNGraph("tag", false, ng_node);
-  ASSERT_EQ(ng_node->get_shape(), shape);
+  auto shape = ngraph::Shape{2, 3, 4, 5};
+  ngraph::Output<ngraph::Node> node =
+      make_shared<ngraph::op::Parameter>(ngraph::element::f32, shape);
+  NHWCtoNCHW("tag", false, node);
+  ASSERT_EQ(node.get_shape(), shape);
 }
 
 TEST(conversions, param_to_ngraph_nchw) {
   vector<size_t> in1{1, 2, 3, 4};
   vector<size_t> out1(4);
-  BatchedOpParamToNGraph(false, in1, out1);
+  NHWCtoHW(false, in1, out1);
   ASSERT_EQ(out1[0], in1[2]);
   ASSERT_EQ(out1[1], in1[3]);
 }
 
 TEST(conversions, batch_to_ngraph_nhwc) {
-  auto shape = ng::Shape{2, 3, 4, 5};
-  std::shared_ptr<ng::Node> ng_node =
-      make_shared<ng::op::Parameter>(ng::element::f32, shape);
-  BatchToNGraph("tag", true, ng_node);
-  ASSERT_EQ(ng_node->get_shape(), (ng::Shape{2, 5, 3, 4}));
+  auto shape = ngraph::Shape{2, 3, 4, 5};
+  ngraph::Output<ngraph::Node> node =
+      make_shared<ngraph::op::Parameter>(ngraph::element::f32, shape);
+  NHWCtoNCHW("tag", true, node);
+  ASSERT_EQ(node.get_shape(), (ngraph::Shape{2, 5, 3, 4}));
 }
 
 TEST(conversions, param_to_ngraph_nhwc) {
   vector<size_t> in1{1, 2, 3, 4};
   vector<size_t> out1(4);
-  BatchedOpParamToNGraph(true, in1, out1);
+  NHWCtoHW(true, in1, out1);
   ASSERT_EQ(out1[0], in1[1]);
   ASSERT_EQ(out1[1], in1[2]);
 }
 
 }  // namespace testing
-
 }  // namespace ngraph_bridge
-
 }  // namespace tensorflow

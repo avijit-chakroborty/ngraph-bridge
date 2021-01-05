@@ -1,5 +1,5 @@
 # ==============================================================================
-#  Copyright 2018-2019 Intel Corporation
+#  Copyright 2018-2020 Intel Corporation
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import pytest
 import platform
 
 import tensorflow as tf
+tf.compat.v1.disable_eager_execution()
 from tensorflow.python.framework import constant_op
 from tensorflow.python.ops import nn_ops
 import numpy as np
@@ -33,10 +34,14 @@ from common import NgraphTest
 class TestDepthwiseConv2dOperations(NgraphTest):
 
     @pytest.mark.skipif(platform.system() == 'Darwin', reason='Only for Linux')
-    @pytest.mark.parametrize("padding", ("VALID", "SAME"))
-    def test_depthwise_conv2d(self, padding):
-        tensor_in_sizes = [1, 2, 3, 2]
-        filter_in_sizes = [2, 2, 2, 2]
+    @pytest.mark.parametrize("padding", ["VALID", "SAME"])
+    @pytest.mark.parametrize(('tensor_in_sizes', 'filter_in_sizes'),
+                             [([1, 2, 3, 2], [2, 2, 2, 2]),
+                              ([1, 3, 2, 1], [2, 1, 1, 2]),
+                              ([1, 3, 1, 2], [1, 1, 2, 2])])
+    def test_depthwise_conv2d(self, padding, tensor_in_sizes, filter_in_sizes):
+        tensor_in_sizes = tensor_in_sizes
+        filter_in_sizes = filter_in_sizes
         total_size_1 = 1
         total_size_2 = 1
 

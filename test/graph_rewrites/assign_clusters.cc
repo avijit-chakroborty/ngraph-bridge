@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright 2017-2019 Intel Corporation
+ * Copyright 2017-2020 Intel Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,12 +24,9 @@
 #include "test/test_utilities.h"
 
 using namespace std;
-namespace ng = ngraph;
 
 namespace tensorflow {
-
 namespace ngraph_bridge {
-
 namespace testing {
 
 // Test that a "Const" fed to a static input is still coalesced with the
@@ -109,9 +106,9 @@ TEST(AssignClusters, Cone) {
   Tensor t(DT_FLOAT, TensorShape{2, 3});
 
   Node* node1;
-  ASSERT_OK(NodeBuilder("node1", "Const")
-                .Attr("dtype", DT_FLOAT)
-                .Attr("value", t)
+  ASSERT_OK(NodeBuilder("node1", "_Arg")
+                .Attr("T", DT_FLOAT)
+                .Attr("index", 0)
                 .Attr("_ngraph_marked_for_clustering", true)
                 .Finalize(&g, &node1));
 
@@ -147,15 +144,15 @@ TEST(AssignClusters, Cone) {
 
   ASSERT_OK(AssignClusters(&g));
 
-  int node2_cluster, node3_cluster;
+  int node1_cluster, node2_cluster, node3_cluster;
+  ASSERT_OK(GetNodeCluster(node1, &node1_cluster));
   ASSERT_OK(GetNodeCluster(node2, &node2_cluster));
   ASSERT_OK(GetNodeCluster(node3, &node3_cluster));
 
   ASSERT_NE(node2_cluster, node3_cluster);
+  ASSERT_EQ(node1_cluster, node2_cluster);
 }
 
 }  // namespace testing
-
 }  // namespace ngraph_bridge
-
 }  // namespace tensorflow

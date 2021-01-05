@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright 2017-2019 Intel Corporation
+ * Copyright 2017-2020 Intel Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@
 using namespace std;
 
 namespace tensorflow {
-
 namespace ngraph_bridge {
+
 // Static initializers
 std::vector<GraphDef*> NGraphClusterManager::s_cluster_graphs;
 std::mutex NGraphClusterManager::s_cluster_graphs_mutex;
@@ -40,5 +40,4 @@ GraphDef* NGraphClusterManager::GetClusterGraph(size_t idx) {
 void NGraphClusterManager::EvictAllClusters() { s_cluster_graphs.clear(); }
 
 }  // namespace ngraph_bridge
-
 }  // namespace tensorflow

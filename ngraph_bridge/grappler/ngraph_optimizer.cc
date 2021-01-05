@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright 2019 Intel Corporation
+ * Copyright 2019-2020 Intel Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 #include <iomanip>
 
+#include "absl/synchronization/mutex.h"
 #include "tensorflow/core/framework/attr_value.pb.h"
 #include "tensorflow/core/framework/node_def.pb.h"
 #include "tensorflow/core/grappler/clusters/cluster.h"
@@ -25,13 +26,9 @@
 #include "tensorflow/core/grappler/utils.h"
 #include "tensorflow/core/platform/protobuf.h"
 
+#include "ngraph_bridge/api.h"
 #include "ngraph_bridge/grappler/ngraph_optimizer.h"
-#include "ngraph_bridge/ngraph_backend_manager.h"
 #include "ngraph_bridge/ngraph_cluster_manager.h"
-
-#if defined NGRAPH_DISTRIBUTED
-#include "ngraph/distributed.hpp"
-#endif
 
 #include <iostream>
 
@@ -43,59 +40,17 @@ namespace ngraph_bridge {
 Status NgraphOptimizer::Init(
     const tensorflow::RewriterConfig_CustomGraphOptimizer* config) {
   const auto params = config->parameter_map();
-  for (size_t i = 0; i < compulsory_attrs.size(); i++) {
-    if (params.count(compulsory_attrs[i]) == 0) {
-      NGRAPH_VLOG(0) << "NGTF_OPTIMIZER: Compulsory attribute "
-                     << compulsory_attrs[i] << " not found.";
-      return errors::Internal("NGTF_OPTIMIZER: Missing compulsory attributes.");
-    }
-  }
-  config_backend_name = params.at("ngraph_backend").s();
-  config_device_id = params.at("device_id").s();
-  NGRAPH_VLOG(3) << "Backend name from config: " << config_backend_name;
-  std::set<ShapeHintMap> shape_hints;
-  // typedef std::map<std::string, std::vector<int>> ShapeHintMap;
   for (auto i : params) {
-    if (i.first != "ngraph_backend") {
-      // TODO: slightly hacky. The bridge reserves the right to use optional
-      // attributes whose names start with shape_hint
-      if (i.first.rfind("shape_hint", 0) != 0) {
-        config_map[(i.first == "device_id" ? "" : "_") +
-                   std::string("ngraph_") + i.first] = i.second.s();
-        NGRAPH_VLOG(3) << "Attribute: " << i.first
-                       << " Value: " << config_map["_ngraph_" + i.first];
-      } else {
-        ShapeHintMap hint;
-        for (auto k : i.second.func().attr().at("hint_body").func().attr()) {
-          vector<int> full_or_partial_shape;
-          for (auto dim : k.second.tensor().int_val()) {
-            full_or_partial_shape.push_back(dim);
-          }
-          hint[k.first] = full_or_partial_shape;
-        }
-        shape_hints.insert(hint);
-      }
-    }
+    m_config_map["_ngraph_" + i.first] = i.second.s();
+    NGRAPH_VLOG(3) << "Attribute: " << i.first
+                   << " Value: " << m_config_map["_ngraph_" + i.first];
   }
-  auto itr = params.find("aot_requested");
-  bool do_aot = false;
-  if (itr != params.end()) {
-    do_aot = itr->second.s() == "1";
-  }
-  if (!do_aot && shape_hints.size() > 0) {
-    return errors::Internal(
-        "Did not requested AOT, but passed shape hints. Please request to use "
-        "shape hints (by using --precompile in tf2ngraph.py), or if AOT is not "
-        "desired then do not pass shape hints");
-  }
-  aot_info = make_pair(do_aot, shape_hints);
   return Status::OK();
 }
 
 Status NgraphOptimizer::Optimize(tensorflow::grappler::Cluster* cluster,
                                  const tensorflow::grappler::GrapplerItem& item,
                                  GraphDef* output) {
-  NGRAPH_VLOG(3) << "NGTF_OPTIMIZER: Here at NgraphOptimizer ";
   NGRAPH_VLOG(5) << "NGTF_OPTIMIZER: grappler item id " << item.id;
 
   // Convert the GraphDef to Graph
@@ -110,16 +65,11 @@ Status NgraphOptimizer::Optimize(tensorflow::grappler::Cluster* cluster,
   // runs of this pass.
   int idx = FreshIndex();
 
-  // If requested, dump pre-capture graphs.
-  if (DumpPrecaptureGraphs()) {
-    DumpGraphs(graph, idx, "precapture", "Pre-Capture Graph");
-  }
-
   // If ngraph is disabled via ngraph_bridge api or NGRAPH_TF_DISABLE is set
   // we will not do anything; all subsequent passes become a no-op.
   bool ngraph_not_enabled =
-      (!config::IsEnabled()) || (std::getenv("NGRAPH_TF_DISABLE") != nullptr);
-  bool already_processed = IsProcessedByNgraphPass(&graph);
+      (!api::IsEnabled()) || (std::getenv("NGRAPH_TF_DISABLE") != nullptr);
+  bool already_processed = util::IsAlreadyProcessed(&graph);
   if (!already_processed && ngraph_not_enabled) {
     NGRAPH_VLOG(0) << "NGraph is available but disabled.";
   }
@@ -150,7 +100,7 @@ Status NgraphOptimizer::Optimize(tensorflow::grappler::Cluster* cluster,
 
   // Find a list of nodes that are of the types that are disabled
   std::set<string> disabled_nodes;
-  std::set<string> disabled_ops_set = config::GetDisabledOps();
+  std::set<string> disabled_ops_set = api::GetDisabledOps();
   for (auto itr : graph.nodes()) {
     if (disabled_ops_set.find(itr->type_string()) != disabled_ops_set.end()) {
       disabled_nodes.insert(itr->name());
@@ -183,19 +133,6 @@ Status NgraphOptimizer::Optimize(tensorflow::grappler::Cluster* cluster,
   std::set<string>& skip_these_nodes = nodes_to_preserve;
 
   //
-  // Variable capture: Part that replaces all instances of VariableV2 with the
-  // NGraphVariable op. Making this replacement allows us to substitute in a
-  // kernel that tracks the freshness of variables (invalidating freshness when
-  // the reference is handed off to an "untrusted" op).
-  //
-
-  // Do variable capture then, if requested, dump the graphs.
-  TF_RETURN_IF_ERROR(CaptureVariables(&graph, skip_these_nodes));
-  if (DumpCapturedGraphs()) {
-    DumpGraphs(graph, idx, "captured", "Graph With Variables Captured");
-  }
-
-  //
   // Encapsulation: Part that rewrites the graph for nGraph operation.
   //
   // The part has several phases, each executed in sequence:
@@ -206,80 +143,31 @@ Status NgraphOptimizer::Optimize(tensorflow::grappler::Cluster* cluster,
   //   4. Cluster Encapsulation [ngraph_encapsulate_clusters.cc] - currently
   //      part of the ngraph_rewrite_pass.cc to be executed after POST_REWRITE
   //
-  // Between phases, graph dumps (in both .dot and .pbtxt format) may be
-  // requested by setting the following environment variables:
-  //
-  //   NGRAPH_TF_DUMP_UNMARKED_GRAPHS=1      dumps graphs before phase 1
-  //   NGRAPH_TF_DUMP_MARKED_GRAPHS=1        dumps graphs after phase 1
-  //   NGRAPH_TF_DUMP_CLUSTERED_GRAPHS=1     dumps graphs after phase 2
-  //   NGRAPH_TF_DUMP_DECLUSTERED_GRAPHS=1   dumps graphs after phase 3
-  //   NGRAPH_TF_DUMP_ENCAPSULATED_GRAPHS=1  dumps graphs after phase 4
-  //   NGRAPH_TF_DUMP_GRAPHS=1               all of the above
-  //
 
   // If requested, dump unmarked graphs.
-  if (DumpUnmarkedGraphs()) {
-    DumpGraphs(graph, idx, "unmarked", "Unmarked Graph");
-  }
-
-  // Get backend + its configurations, to be attached to the nodes
-  // using RewriteConfig
-  string backend_creation_string = BackendManager::GetBackendCreationString(
-      config_backend_name, config_device_id);
-
-  // Override from the env. for debugging purposes
-  if (std::getenv("NGRAPH_TF_BACKEND") != nullptr) {
-    backend_creation_string = std::getenv("NGRAPH_TF_BACKEND");
-  }
-
-  TF_RETURN_IF_ERROR(BackendManager::CanCreateBackend(backend_creation_string));
-  NGRAPH_VLOG(1) << "Setting backend from the RewriteConfig "
-                 << backend_creation_string;
-
-  NGRAPH_VLOG(0) << "NGraph using backend: " << backend_creation_string;
+  util::DumpTFGraph(&graph, idx, "unmarked");
 
   // 1. Mark for clustering then, if requested, dump the graphs.
-  TF_RETURN_IF_ERROR(
-      MarkForClustering(&graph, skip_these_nodes, backend_creation_string));
-  if (DumpMarkedGraphs()) {
-    DumpGraphs(graph, idx, "marked", "Graph Marked for Clustering");
-  }
+  TF_RETURN_IF_ERROR(MarkForClustering(&graph, skip_these_nodes));
+  util::DumpTFGraph(&graph, idx, "marked");
 
   // 2. Assign clusters then, if requested, dump the graphs.
   TF_RETURN_IF_ERROR(AssignClusters(&graph));
-  if (DumpClusteredGraphs()) {
-    DumpGraphs(graph, idx, "clustered", "Graph with Clusters Assigned");
-  }
+  util::DumpTFGraph(&graph, idx, "clustered");
 
   // 3. Deassign trivial clusters then, if requested, dump the graphs.
   TF_RETURN_IF_ERROR(DeassignClusters(&graph));
-  if (DumpDeclusteredGraphs()) {
-    DumpGraphs(graph, idx, "declustered",
-               "Graph with Trivial Clusters De-Assigned");
-  }
+  util::DumpTFGraph(&graph, idx, "declustered");
 
   // 4. Encapsulate clusters then, if requested, dump the graphs.
-  FunctionDefLibrary* fdeflib_new = new FunctionDefLibrary();
-  TF_RETURN_IF_ERROR(
-      // TODO: right now _ngraph_aot_requested is passed along in config_map.
-      EncapsulateClusters(&graph, idx, fdeflib_new, config_map, aot_info));
-  if (DumpEncapsulatedGraphs()) {
-    DumpGraphs(graph, idx, "encapsulated", "Graph with Clusters Encapsulated");
+  auto status = EncapsulateClusters(&graph, idx, m_config_map);
+  if (status != Status::OK()) {
+    return status;
   }
-
-  // Rewrite for tracking then, if requested, dump the graphs.
-  TF_RETURN_IF_ERROR(RewriteForTracking(&graph, idx));
-  if (DumpTrackedGraphs()) {
-    DumpGraphs(graph, idx, "tracked",
-               "Graph with Variables Rewritten for Tracking");
-  }
+  util::DumpTFGraph(&graph, idx, "encapsulated");
 
   // Convert the graph back to Graphdef
   graph.ToGraphDef(output);
-  // According to the doc, the message takes ownership of the allocated object
-  // https://developers.google.com/protocol-buffers/docs/reference/cpp-generated#proto3_string
-  // Hence no need to free fdeflib_new
-  output->set_allocated_library(fdeflib_new);
   return Status::OK();
 }
 
@@ -287,19 +175,6 @@ void NgraphOptimizer::Feedback(tensorflow::grappler::Cluster* cluster,
                                const tensorflow::grappler::GrapplerItem& item,
                                const GraphDef& optimize_output, double result) {
   // no-op
-}
-
-void NgraphOptimizer::DumpGraphs(Graph& graph, int idx,
-                                 std::string filename_prefix,
-                                 std::string title) {
-  // If we have a "main" graph, dump that.
-  auto dot_filename = DotFilename(filename_prefix, idx);
-  auto pbtxt_filename = PbtxtFilename(filename_prefix, idx);
-  NGRAPH_VLOG(0) << "NGTF_OPTIMIZER: Dumping main graph to " << dot_filename;
-  NGRAPH_VLOG(0) << "NGTF_OPTIMIZER: Dumping main graph to " << pbtxt_filename;
-
-  GraphToDotFile(&graph, dot_filename, title);
-  GraphToPbTextFile(&graph, pbtxt_filename);
 }
 
 int NgraphOptimizer::FreshIndex() {
@@ -310,5 +185,4 @@ int NgraphOptimizer::FreshIndex() {
 REGISTER_GRAPH_OPTIMIZER_AS(NgraphOptimizer, "ngraph-optimizer");
 
 }  // end namespace ngraph_bridge
-
 }  // end namespace tensorflow

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright 2019 Intel Corporation
+ * Copyright 2019-2020 Intel Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@
 
 #include "tensorflow/core/graph/node_builder.h"
 
-#include "ngraph_bridge/ngraph_api.h"
+#include "ngraph_bridge/api.h"
 #include "ngraph_bridge/ngraph_mark_for_clustering.h"
 #include "test/test_utilities.h"
 
@@ -26,38 +26,42 @@ using namespace std;
 namespace ng = ngraph;
 
 namespace tensorflow {
-
 namespace ngraph_bridge {
-
 namespace testing {
+
+void ResetMarkForClustering(tensorflow::Graph* graph) {
+  for (auto node : graph->nodes()) {
+    node->ClearAttr("_ngraph_marked_for_clustering");
+  }
+}
 
 // Set using C API, get using C API
 TEST(DisableOps, SimpleSettingAndGetting1) {
   char disabled_list[] = "Add,Sub";
-  config::ngraph_set_disabled_ops(disabled_list);
-  ASSERT_EQ(string(config::ngraph_get_disabled_ops()), "Add,Sub");
+  api::set_disabled_ops(disabled_list);
+  ASSERT_EQ(string(api::get_disabled_ops()), "Add,Sub");
 
   // Clean up
-  config::ngraph_set_disabled_ops("");
+  api::set_disabled_ops("");
 }
 
 // Set using Cpp API, get using Cpp API
 TEST(DisableOps, SimpleSettingAndGetting2) {
-  config::SetDisabledOps("Add,Sub");
+  api::SetDisabledOps("Add,Sub");
   auto expected = set<string>{"Add", "Sub"};
-  ASSERT_EQ(config::GetDisabledOps(), expected);
+  ASSERT_EQ(api::GetDisabledOps(), expected);
 
   // Clean up
-  config::ngraph_set_disabled_ops("");
+  api::set_disabled_ops("");
 }
 
 // Set using Cpp API, get using C API
 TEST(DisableOps, SimpleSettingAndGetting3) {
-  config::SetDisabledOps(std::set<string>{"Add", "Sub"});
-  ASSERT_EQ(string(config::ngraph_get_disabled_ops()), "Add,Sub");
+  api::SetDisabledOps(std::set<string>{"Add", "Sub"});
+  ASSERT_EQ(string(api::get_disabled_ops()), "Add,Sub");
 
   // Clean up
-  config::ngraph_set_disabled_ops("");
+  api::set_disabled_ops("");
 }
 
 // Multiple tests of setting and getting executed on a graph that adds 2 consts
@@ -65,7 +69,7 @@ TEST(DisableOps, SimpleSettingAndGetting3) {
 TEST(DisableOps, DisableTest) {
   Graph g(OpRegistry::Global());
 
-  config::ngraph_set_disabled_ops("");
+  api::set_disabled_ops("");
 
   Tensor t_input(DT_FLOAT, TensorShape{2, 3});
   Tensor t_shape(DT_INT32, TensorShape{2});
@@ -97,7 +101,7 @@ TEST(DisableOps, DisableTest) {
   g.AddEdge(source, Graph::kControlSlot, node2, Graph::kControlSlot);
   g.AddEdge(node3, Graph::kControlSlot, sink, Graph::kControlSlot);
 
-  ASSERT_OK(MarkForClustering(&g, {}, "CPU"));
+  ASSERT_OK(MarkForClustering(&g, {}));
 
   bool marked = false;
 
@@ -114,13 +118,11 @@ TEST(DisableOps, DisableTest) {
       GetNodeAttr(node3->attrs(), "_ngraph_marked_for_clustering", &marked));
   ASSERT_TRUE(marked);
 
-  node1->ClearAttr("_ngraph_marked_for_clustering");
-  node2->ClearAttr("_ngraph_marked_for_clustering");
-  node3->ClearAttr("_ngraph_marked_for_clustering");
+  ResetMarkForClustering(&g);
 
   // Add is disabled
-  config::ngraph_set_disabled_ops("Add,Mul");
-  ASSERT_OK(MarkForClustering(&g, {}, "CPU"));
+  api::set_disabled_ops("Add,Mul");
+  ASSERT_OK(MarkForClustering(&g, {}));
   ASSERT_OK(
       GetNodeAttr(node1->attrs(), "_ngraph_marked_for_clustering", &marked));
   ASSERT_TRUE(marked);
@@ -132,13 +134,11 @@ TEST(DisableOps, DisableTest) {
   ASSERT_NOT_OK(
       GetNodeAttr(node3->attrs(), "_ngraph_marked_for_clustering", &marked));
 
-  node1->ClearAttr("_ngraph_marked_for_clustering");
-  node2->ClearAttr("_ngraph_marked_for_clustering");
-  node3->ClearAttr("_ngraph_marked_for_clustering");
+  ResetMarkForClustering(&g);
 
   // Add,Add,Mul,Add should work too
-  config::ngraph_set_disabled_ops("Add,Add,Mul,Add");
-  ASSERT_OK(MarkForClustering(&g, {}, "CPU"));
+  api::set_disabled_ops("Add,Add,Mul,Add");
+  ASSERT_OK(MarkForClustering(&g, {}));
   ASSERT_OK(
       GetNodeAttr(node1->attrs(), "_ngraph_marked_for_clustering", &marked));
   ASSERT_TRUE(marked);
@@ -150,13 +150,11 @@ TEST(DisableOps, DisableTest) {
   ASSERT_NOT_OK(
       GetNodeAttr(node3->attrs(), "_ngraph_marked_for_clustering", &marked));
 
-  node1->ClearAttr("_ngraph_marked_for_clustering");
-  node2->ClearAttr("_ngraph_marked_for_clustering");
-  node3->ClearAttr("_ngraph_marked_for_clustering");
+  ResetMarkForClustering(&g);
 
   // Resetting it. So Add should be accepted now
-  config::ngraph_set_disabled_ops("");
-  ASSERT_OK(MarkForClustering(&g, {}, "CPU"));
+  api::set_disabled_ops("");
+  ASSERT_OK(MarkForClustering(&g, {}));
   ASSERT_OK(
       GetNodeAttr(node1->attrs(), "_ngraph_marked_for_clustering", &marked));
   ASSERT_TRUE(marked);
@@ -169,13 +167,11 @@ TEST(DisableOps, DisableTest) {
       GetNodeAttr(node3->attrs(), "_ngraph_marked_for_clustering", &marked));
   ASSERT_TRUE(marked);
 
-  node1->ClearAttr("_ngraph_marked_for_clustering");
-  node2->ClearAttr("_ngraph_marked_for_clustering");
-  node3->ClearAttr("_ngraph_marked_for_clustering");
+  ResetMarkForClustering(&g);
 
   // Invalid op name should trigger an error
-  config::ngraph_set_disabled_ops("Add,_InvalidOp");
-  ASSERT_NOT_OK(MarkForClustering(&g, {}, "CPU"));
+  api::set_disabled_ops("Add,_InvalidOp");
+  ASSERT_NOT_OK(MarkForClustering(&g, {}));
   ASSERT_NOT_OK(
       GetNodeAttr(node1->attrs(), "_ngraph_marked_for_clustering", &marked));
   ASSERT_NOT_OK(
@@ -184,8 +180,9 @@ TEST(DisableOps, DisableTest) {
       GetNodeAttr(node3->attrs(), "_ngraph_marked_for_clustering", &marked));
 
   // Clean up
-  config::ngraph_set_disabled_ops("");
+  api::set_disabled_ops("");
 }
-}
-}
-}
+
+}  // namespace testing
+}  // namespace ngraph_bridge
+}  // namespace tensorflow

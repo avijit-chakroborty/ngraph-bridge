@@ -1,5 +1,5 @@
 # ==============================================================================
-#  Copyright 2018-2019 Intel Corporation
+#  Copyright 2018-2020 Intel Corporation
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -35,24 +35,21 @@ class TestNgraphAPI(NgraphTest):
         ngraph_bridge.enable()
         assert ngraph_bridge.is_enabled() == 1
 
-    def test_backends_len(self):
-        assert ngraph_bridge.backends_len()
-
-    def test_set_backend(self):
-        ngraph_bridge.set_backend('CPU')
-        assert ngraph_bridge.get_currently_set_backend_name() == "CPU"
-
     def test_set_backend_invalid(self):
+        env_var_map = self.store_env_variables(["NGRAPH_TF_BACKEND"])
+        self.unset_env_variable("NGRAPH_TF_BACKEND")
+        current_backend = ngraph_bridge.get_backend()
+        error_thrown = False
         try:
             ngraph_bridge.set_backend('POTATO')
-            error_thrown = False
         except:
             error_thrown = True
+        ngraph_bridge.set_backend(current_backend)
+        self.restore_env_variables(env_var_map)
         assert error_thrown
 
     def test_list_backends(self):
-        backends_count = ngraph_bridge.backends_len()
-        assert len(ngraph_bridge.list_backends()) == backends_count
+        assert len(ngraph_bridge.list_backends())
 
     def test_start_logging_placement(self):
         ngraph_bridge.start_logging_placement()

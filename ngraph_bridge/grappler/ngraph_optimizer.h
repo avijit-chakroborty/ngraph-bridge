@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright 2019 Intel Corporation
+ * Copyright 2019-2020 Intel Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,19 +28,15 @@
 #include "logging/ngraph_log.h"
 #include "logging/tf_graph_writer.h"
 #include "ngraph_bridge/grappler/ngraph_add_identityn.h"
-#include "ngraph_bridge/ngraph_api.h"
 #include "ngraph_bridge/ngraph_assign_clusters.h"
-#include "ngraph_bridge/ngraph_capture_variables.h"
 #include "ngraph_bridge/ngraph_deassign_clusters.h"
 #include "ngraph_bridge/ngraph_encapsulate_clusters.h"
 #include "ngraph_bridge/ngraph_mark_for_clustering.h"
-#include "ngraph_bridge/ngraph_rewrite_for_tracking.h"
 #include "ngraph_bridge/ngraph_utils.h"
 
 #include <iomanip>
 
 namespace tensorflow {
-
 namespace ngraph_bridge {
 
 // Custom Grappler Optimizer for NGraph-TF
@@ -50,6 +46,8 @@ class NgraphOptimizer : public tensorflow::grappler::CustomGraphOptimizer {
   ~NgraphOptimizer() override = default;
 
   string name() const override { return "NgraphOptimizer"; };
+
+  bool UsesFunctionLibrary() const override { return true; }
 
   Status Init(
       const tensorflow::RewriterConfig_CustomGraphOptimizer* config) override;
@@ -72,24 +70,16 @@ class NgraphOptimizer : public tensorflow::grappler::CustomGraphOptimizer {
                 double) override;
 
  private:
-  std::string config_backend_name;
-  std::string config_device_id;
-  std::unordered_map<std::string, std::string> config_map;
-  std::vector<string> compulsory_attrs = {"ngraph_backend", "device_id"};
-
-  void DumpGraphs(Graph&, int, std::string, std::string);
-
+  std::unordered_map<std::string, std::string> m_config_map;
   static int FreshIndex();
 
   static int s_serial_counter GUARDED_BY(s_serial_counter_mutex);
   static mutex s_serial_counter_mutex;
-  AOTInfo aot_info;
 };
 
 int NgraphOptimizer::s_serial_counter = 0;
 mutex NgraphOptimizer::s_serial_counter_mutex;
 
 }  // namespace ngraph_bridge
-
 }  // namespace tensorflow
 #endif  // NGRAPH_TF_NGRAPHOPTIMIZER_H_

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ==============================================================================
-#  Copyright 2018-2019 Intel Corporation
+#  Copyright 2018-2020 Intel Corporation
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -24,13 +24,12 @@ import glob
 import platform
 from distutils.sysconfig import get_python_lib
 
-#from tools.build_utils import load_venv, command_executor
 from tools.test_utils import *
 
 
 def main():
     '''
-    Tests nGraph-TensorFlow Python 3. This script needs to be run after 
+    Runs bridge tests. This script needs to be run after 
     running build_ngtf.py which builds the ngraph-tensorflow-bridge
     and installs it to a virtual environment that would be used by this script.
     '''
@@ -51,13 +50,13 @@ def main():
         action="store_true")
 
     parser.add_argument(
-        '--test_bazel_build',
-        help="Runs the bazel based build\n",
+        '--test_resnet',
+        help="Runs TensorFlow Python tests (Pytest based).\n",
         action="store_true")
 
     parser.add_argument(
-        '--test_resnet',
-        help="Runs TensorFlow Python tests (Pytest based).\n",
+        '--test_resnet50_infer',
+        help="Runs ResNet50 inference from IntelAI models.\n",
         action="store_true")
 
     parser.add_argument(
@@ -67,18 +66,7 @@ def main():
         "Location of the artifacts that would be used for running the tests\n",
         action="store")
 
-    parser.add_argument(
-        '--backend',
-        type=str,
-        help="String indicating what backend to use (e.g., CPU, INTERPRETER)\n",
-        action="store")
-
     arguments = parser.parse_args()
-
-    #-------------------------------
-    # Recipe
-    #-------------------------------
-
     root_pwd = os.getcwd()
 
     # Check for mandetary parameters
@@ -86,46 +74,40 @@ def main():
         raise Exception("Need to specify --artifacts_dir")
 
     # Set the backend if specified
-    # NOTE: This way of backend setting will not work with grappler
-    if (arguments.backend):
-        os.environ['NGRAPH_TF_BACKEND'] = arguments.backend
+    backend = TestEnv.BACKEND()
+    print("nGraph bridge Backend set to:", backend)
 
     # Decide which tests to run
     if (arguments.test_cpp):
         test_filter = None
-        if arguments.backend:
-            if 'GPU' in arguments.backend:
-                test_filter = str(
-                    "-ArrayOps.Quanti*:ArrayOps.Dequant*:BackendManager.BackendAssignment:"
-                    "MathOps.AnyKeepDims:MathOps.AnyNegativeAxis:MathOps.AnyPositiveAxis:"
-                    "MathOps.AllKeepDims:MathOps.AllNegativeAxis:MathOps.AllPositiveAxis:"
-                    "NNOps.Qu*:NNOps.SoftmaxZeroDimTest*:"
-                    "NNOps.SparseSoftmaxCrossEntropyWithLogits:"
-                    "ArrayOps.GatherNd*")
         os.environ['NGRAPH_TF_LOG_0_DISABLED'] = '1'
         run_ngtf_cpp_gtests(arguments.artifacts_dir, './', test_filter)
     elif (arguments.test_python):
         run_ngtf_pytests_from_artifacts(arguments.artifacts_dir)
-    elif (arguments.test_bazel_build):
-        run_bazel_build()
     elif (arguments.test_tf_python):
         os.environ['NGRAPH_TF_LOG_0_DISABLED'] = '1'
         run_tensorflow_pytests_from_artifacts(
-            arguments.backend, './',
-            arguments.artifacts_dir + '/tensorflow/python', False)
+            './', arguments.artifacts_dir + '/tensorflow/python', False)
     elif (arguments.test_resnet):
-        if get_os_type() == 'Darwin':
+        if TestEnv.is_osx():
             run_resnet50_forward_pass_from_artifacts(
                 './', arguments.artifacts_dir, 1, 32)
         else:
             batch_size = 128
             iterations = 10
-            if arguments.backend:
-                if 'GPU' in arguments.backend:
-                    batch_size = 64
-                    iterations = 100
             run_resnet50_from_artifacts('./', arguments.artifacts_dir,
                                         batch_size, iterations)
+    elif (arguments.test_resnet50_infer):
+        if TestEnv.is_osx():
+            raise Exception("RN50 inference test not supported on Darwin/OSX")
+        else:
+            batch_size = 128
+            iterations = 10
+            if backend != 'CPU':
+                batch_size = 1
+                iterations = 1
+            run_resnet50_infer_from_artifacts(arguments.artifacts_dir,
+                                              batch_size, iterations)
     else:
         raise Exception("No tests specified")
 

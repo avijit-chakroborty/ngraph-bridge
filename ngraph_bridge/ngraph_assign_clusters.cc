@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright 2017-2019 Intel Corporation
+ * Copyright 2017-2020 Intel Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,8 +26,8 @@
 #include "tensorflow/core/platform/protobuf.h"
 #include "tensorflow/core/util/device_name_utils.h"
 
+#include "api.h"
 #include "logging/ngraph_log.h"
-#include "ngraph_bridge/ngraph_api.h"
 #include "ngraph_bridge/ngraph_assign_clusters.h"
 #include "ngraph_bridge/ngraph_cluster_manager.h"
 #include "ngraph_bridge/ngraph_mark_for_clustering.h"
@@ -38,7 +38,6 @@
 using namespace std;
 
 namespace tensorflow {
-
 namespace ngraph_bridge {
 
 //
@@ -92,41 +91,11 @@ namespace {
 struct Cluster {
   int index;
   std::set<tensorflow::Node*> nodes;
-  std::string backend;
 #if !defined(NGRAPH_TF_DISABLE_DEADNESS_CHECK)
   std::string predicate_string;
   std::set<const Edge*> outgoing_edges;
 #endif
 };
-
-Status InitialiseNodeBackend(Node* node, string* backend) {
-  NGRAPH_VLOG(5) << "Initialize Node Backend " << node->name();
-  if (!HasNodeAttr(node->def(), "_ngraph_backend")) {
-    *backend = "HOST";
-    return Status::OK();
-  }
-  NGRAPH_VLOG(5) << "Should have been assigned Node Backend " << node->name();
-  TF_RETURN_IF_ERROR(GetNodeBackend(node, backend));
-  // TF_RETURN_IF_ERROR(GetNodeAttr(node->attrs(), "_ngraph_backend", backend));
-  return Status::OK();
-}
-
-Status CanContractEdgeBackendCheck(
-    Edge* edge, const std::map<Node*, std::shared_ptr<Cluster>>& cluster_map,
-    bool& is_backend_ok) {
-  Node* src = edge->src();
-  Node* dst = edge->dst();
-
-  string src_backend = cluster_map.at(src)->backend;
-  string dst_backend = cluster_map.at(dst)->backend;
-
-  if (src_backend == dst_backend) {
-    is_backend_ok = true;
-  } else {
-    is_backend_ok = false;
-  }
-  return Status::OK();
-}
 
 #if !defined(NGRAPH_TF_DISABLE_DEADNESS_CHECK)
 // Returns the predicate of the merged cluster
@@ -339,14 +308,9 @@ Status AssignClusters(Graph* graph) {
     int new_index = gc.NewNode();
     cluster_map[node] = std::make_shared<Cluster>();
     cluster_map[node]->index = new_index;
-    string backend;
-    TF_RETURN_IF_ERROR(InitialiseNodeBackend(node, &backend));
-
-    cluster_map[node]->backend = backend;
     cluster_map[node]->nodes.insert(node);
     NGRAPH_VLOG(5) << "Creating graphcycle Node: " << new_index << " for "
-                   << node->name() << "[" << node->type_string() << "]"
-                   << " backend " << backend;
+                   << node->name() << "[" << node->type_string() << "]";
 
 #if !defined(NGRAPH_TF_DISABLE_DEADNESS_CHECK)
     // get predicate string for the node
@@ -438,21 +402,20 @@ Status AssignClusters(Graph* graph) {
   bool changed;
   bool collect_non_contracting_edge_info = false;  // Must init with false
 
-  // 7 exhaustive reasons why edges might non contract
+  // 6 exhaustive reasons why edges might non contract
   // The reasons are not mutually exclusive, but there is an order of priority
   // that makes them mutually exclusive
   enum EdgeNonContractionReasons {
     NOTANOP,      // edge connects to non-ops
     UNSUPPORTED,  // either the src or dst is an unsupported op
     DEADNESS,     // deadness criteria not met
-    BACKEND,      // different backends
     SAMECLUSTER,  // both ends lie in the same cluster
     STATICINPUT,  // static input in dst (not fed by const)
     PATHEXISTS    // base case reason. contraction causes cycles
   };
   static std::vector<string> reason_string(  // to convert the enum to string
-      {"NOTANOP", "UNSUPPORTED", "DEADNESS", "BACKEND", "SAMECLUSTER",
-       "STATICINPUT", "PATHEXISTS"});
+      {"NOTANOP", "UNSUPPORTED", "DEADNESS", "SAMECLUSTER", "STATICINPUT",
+       "PATHEXISTS"});
   // a cluster pair is the string "cluster1_id, cluster2_id"
   // Using string, because a pair won't hash unless implemented
   // Note that we store a vector of "reasons", because there could be multiple
@@ -544,24 +507,6 @@ Status AssignClusters(Graph* graph) {
       }
 #endif
 
-      // check if the edge can be constracted with respect to backend
-      bool is_backend_ok = false;
-      TF_RETURN_IF_ERROR(
-          CanContractEdgeBackendCheck(edge, cluster_map, is_backend_ok));
-      if (!is_backend_ok) {
-        NGRAPH_VLOG(5) << "Skipping (backend not ok): " << src->name() << "["
-                       << edge->src_output() << "]@" << src_index << " -> "
-                       << dst->name() << "[" << edge->dst_input() << "]@"
-                       << dst_index;
-        if (collect_non_contracting_edge_info) {
-          log_reason(EdgeNonContractionReasons::BACKEND, edge);
-          cluster_separation_reason[get_string_key(src_index, dst_index)]
-              .push_back(EdgeNonContractionReasons::BACKEND);
-        }
-        // do not contract, src and dst node cannot be in the same cluster
-        continue;
-      }
-
       // Check if contracting the edge will lead to cycles
       // if not, MergeClusters
       if (gc.HasEdge(src_index, dst_index) &&
@@ -596,7 +541,7 @@ Status AssignClusters(Graph* graph) {
       }
     }
 
-    if (!changed && config::IsLoggingPlacement()) {
+    if (!changed && api::IsLoggingPlacement()) {
       // This will be entered only once if logging is enabled
       // When entered, it will force the do-while to run one last time,
       // collecting information
@@ -671,7 +616,7 @@ Status AssignClusters(Graph* graph) {
       // TODO(amprocte): move attr name to a constant
       node->AddAttr("_ngraph_cluster", (int)cluster_idx);
 
-      if (config::IsLoggingPlacement()) {
+      if (api::IsLoggingPlacement()) {
         // map from cluster id to ngraph_cluster id
         cluster_to_encapsulate[cluster->index] = cluster_idx;
       }
@@ -681,8 +626,8 @@ Status AssignClusters(Graph* graph) {
   }
   NGRAPH_VLOG(2) << "Tagging done";
 
-  if (config::IsLoggingPlacement()) {
-    int num_reasons = 7;  // the number of elements in the reasons enum
+  if (api::IsLoggingPlacement()) {
+    int num_reasons = 6;  // the number of elements in the reasons enum
     // histogram of reasons of non-contraction of clusters
     vector<int> reason_count_clusters(num_reasons, 0);
     vector<int> reason_count_encapsulates(num_reasons, 0);
@@ -705,7 +650,7 @@ Status AssignClusters(Graph* graph) {
            "assigned an encapsulate)\n";
     for (auto it : cluster_separation_reason) {
       num_non_contracted += it.second.size();
-      auto cluster_id_vector = ng::split(it.first, ',');
+      auto cluster_id_vector = ngraph::split(it.first, ',');
       // function to find if this cluster became an ngraph_cluster
       // returns ngraph_cluster id if yes, else returns -1
       auto find_in_map = [&cluster_to_encapsulate, &cluster_id_vector](int x) {
@@ -743,16 +688,11 @@ Status AssignClusters(Graph* graph) {
                  to_string(dst_encapsulate) + "] predicate: " +
                  std::get<1>(deadness_predicates_tpl) +
                  " Neighbours predicates: " +
-                 ng::join(std::get<2>(deadness_predicates_tpl)) + "\n");
+                 ngraph::join(std::get<2>(deadness_predicates_tpl)) + "\n");
           }
         }
         reason_count_clusters[inner_itr]++;
       }  // end of the for over each cluster pair's reason vector
-
-      if (deadness_string != "") {
-        std::cout << "Deadness predicates information\n";
-        std::cout << deadness_string;
-      }
 
       if (pair_has_reason) {
         std::cout << src_encapsulate << "->" << dst_encapsulate << ": ";
@@ -818,5 +758,4 @@ Status GetNodeCluster(const Node* node, int* cluster) {
 }
 
 }  // namespace ngraph_bridge
-
 }  // namespace tensorflow

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright 2017-2019 Intel Corporation
+ * Copyright 2017-2020 Intel Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,14 +21,12 @@
 #include "tensorflow/core/graph/graph.h"
 
 namespace tensorflow {
-
 namespace ngraph_bridge {
 
 Status AssignClusters(Graph* graph);
 Status GetNodeCluster(const Node* node, int* cluster);
 
 }  // namespace ngraph_bridge
-
 }  // namespace tensorflow
 
 #endif  // NGRAPH_TF_BRIDGE_ASSIGN_CLUSTERS_H_

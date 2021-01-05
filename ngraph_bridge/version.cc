@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright 2017-2019 Intel Corporation
+ * Copyright 2017-2020 Intel Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,14 +17,16 @@
 #include <iostream>
 #include <string>
 
+#include "tensorflow/core/public/version.h"
+
 #include "ngraph/ngraph.hpp"
 
-#include "ngraph_bridge/version.h"
+#include "version.h"
 
 // nGraph-TensorFlow bridge uses semantic versioning: see http://semver.org/
 
 #define NG_TF_MAJOR_VERSION 0
-#define NG_TF_MINOR_VERSION 19
+#define NG_TF_MINOR_VERSION 23
 #define NG_TF_PATCH_VERSION 0
 
 // The version suffix is used for pre-release version numbers
@@ -32,7 +34,7 @@
 // candidate such as v0.7.0-rc0
 // The code in master will always have the last released version number
 // with a suffix of '-master'
-#define NG_TF_VERSION_SUFFIX "-rc5"
+#define NG_TF_VERSION_SUFFIX "-rc0"
 
 #define VERSION_STR_HELPER(x) #x
 #define VERSION_STR(x) VERSION_STR_HELPER(x)
@@ -47,9 +49,11 @@ extern "C" const char* get_ngraph_version_string();
 
 namespace tensorflow {
 namespace ngraph_bridge {
-const char* ngraph_tf_version() { return (NG_TF_VERSION_STRING); }
-const char* ngraph_lib_version() { return get_ngraph_version_string(); }
-int ngraph_tf_cxx11_abi_flag() {
+
+const char* version() { return (NG_TF_VERSION_STRING); }
+const char* ngraph_version() { return get_ngraph_version_string(); }
+
+int cxx11_abi_flag() {
 #ifdef _GLIBCXX_USE_CXX11_ABI
   return _GLIBCXX_USE_CXX11_ABI;
 #else
@@ -57,7 +61,7 @@ int ngraph_tf_cxx11_abi_flag() {
 #endif
 }
 
-bool ngraph_tf_is_grappler_enabled() {
+bool is_grappler_enabled() {
 #if defined(NGRAPH_TF_USE_GRAPPLER_OPTIMIZER)
   return true;
 #else
@@ -65,13 +69,7 @@ bool ngraph_tf_is_grappler_enabled() {
 #endif
 }
 
-bool ngraph_tf_are_variables_enabled() {
-#if defined(NGRAPH_TF_ENABLE_VARIABLES_AND_OPTIMIZERS)
-  return true;
-#else
-  return false;
-#endif
-}
+const char* tf_version() { return (TF_VERSION_STRING); }
 
 }  // namespace ngraph_bridge
 }  // namespace tensorflow
